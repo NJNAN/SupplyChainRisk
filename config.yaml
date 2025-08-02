@@ -1,0 +1,80 @@
+# 全球供应链风险预测项目配置文件
+project:
+  name: "SupplyChainRisk"
+  version: "1.0.0"
+  description: "基于轻量化RNN和GNN的全球供应链风险预测"
+
+# 数据源配置
+data:
+  comtrade_api: "https://comtrade.un.org/api/get"
+  ais_source: "local"  # 'local' or 'online'
+  use_synthetic: true
+  synthetic_samples: 10000
+  time_column: "timestamp"
+  missing_strategy: "interpolate"  # 'interpolate', 'drop', 'flag'
+
+# 特征工程配置
+features:
+  holiday_calendar: "CN"  # 中国节假日
+  hs_code_encoding: "onehot"  # 'onehot' or 'embedding'
+  normalization: "log"
+  external_data:
+    port_congestion: "data/port_congestion.csv"
+    exchange_rates: "data/exchange_rates.csv"
+    weather: "data/weather.csv"
+
+# 模型配置
+models:
+  rnn:
+    input_dim: 93  # 匹配特征工程后的维度
+    hidden_dim: 128
+    num_layers: 2
+    dropout: 0.3
+    bidirectional: true
+
+  gnn:
+    input_dim: 93  # 匹配特征工程后的维度
+    hidden_dim: 128
+    num_layers: 3
+    dropout: 0.3
+    heads: 4  # for GAT
+
+  transformer:
+    input_dim: 93  # 匹配特征工程后的维度
+    d_model: 128
+    nhead: 8
+    num_layers: 6
+    dropout: 0.3
+
+# 训练配置
+training:
+  batch_size: 32
+  epochs: 100
+  learning_rate: 0.001
+  optimizer: "adam"
+  loss_function: "cross_entropy"
+  early_stopping: 10
+  checkpoint_dir: "checkpoints/"
+
+# 评估配置
+evaluation:
+  metrics: ["accuracy", "f1", "auc", "mae", "rmse"]
+  random_seeds: [42, 123, 456, 789, 999]
+  significance_test: true
+
+# 压缩配置
+compression:
+  pruning_ratios: [0.3, 0.5, 0.7]
+  quantization_bits: [8, 4]
+
+# 鲁棒性测试配置
+robustness:
+  drop_rates: [0.1, 0.2, 0.3, 0.4, 0.5]
+  shuffle_rates: [0.1, 0.2, 0.3, 0.4, 0.5]
+
+# 部署配置
+deployment:
+  target_device: "arm"  # 'arm' or 'x86'
+  memory_limit: "1GB"
+  inference_samples: 1000
+  docker_image: "arm32v7/python:3.8-slim"
