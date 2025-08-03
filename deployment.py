@@ -609,8 +609,8 @@ class DeploymentBenchmark:
 
             # 平均延迟
             bars1 = ax1.bar(models, mean_latencies, color='skyblue', alpha=0.7)
-            ax1.set_title('平均推理延迟')
-            ax1.set_ylabel('延迟 (ms)')
+            ax1.set_title('Average Inference Latency')
+            ax1.set_ylabel('Latency (ms)')
             ax1.tick_params(axis='x', rotation=45)
 
             # 添加数值标签
@@ -620,8 +620,8 @@ class DeploymentBenchmark:
 
             # P99延迟
             bars2 = ax2.bar(models, p99_latencies, color='lightcoral', alpha=0.7)
-            ax2.set_title('P99推理延迟')
-            ax2.set_ylabel('延迟 (ms)')
+            ax2.set_title('P99 Inference Latency')
+            ax2.set_ylabel('Latency (ms)')
             ax2.tick_params(axis='x', rotation=45)
 
             # 添加数值标签
@@ -653,11 +653,11 @@ class DeploymentBenchmark:
             x = np.arange(len(models))
             width = 0.35
 
-            bars1 = ax.bar(x - width/2, peak_memory, width, label='峰值内存', alpha=0.7)
-            bars2 = ax.bar(x + width/2, param_memory, width, label='参数内存', alpha=0.7)
+            bars1 = ax.bar(x - width/2, peak_memory, width, label='Peak Memory', alpha=0.7)
+            bars2 = ax.bar(x + width/2, param_memory, width, label='Parameter Memory', alpha=0.7)
 
-            ax.set_title('内存使用比较')
-            ax.set_ylabel('内存 (MB)')
+            ax.set_title('Memory Usage Comparison')
+            ax.set_ylabel('Memory (MB)')
             ax.set_xticks(x)
             ax.set_xticklabels(models, rotation=45)
             ax.legend()
@@ -697,9 +697,9 @@ class DeploymentBenchmark:
                 plt.annotate(name, (size, latency), xytext=(5, 5),
                            textcoords='offset points', fontsize=9)
 
-            plt.xlabel('模型大小 (MB)')
-            plt.ylabel('推理延迟 (ms)')
-            plt.title('模型大小 vs 推理延迟')
+            plt.xlabel('Model Size (MB)')
+            plt.ylabel('Inference Latency (ms)')
+            plt.title('Model Size vs Inference Latency')
             plt.grid(True, alpha=0.3)
             plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
 
@@ -776,7 +776,7 @@ class DeploymentBenchmark:
         ax.set_xticks(angles[:-1])
         ax.set_xticklabels(dimensions)
         ax.set_ylim(0, 1)
-        ax.set_title('模型实时部署能力评估', pad=20)
+        ax.set_title('Real-time Deployment Capability Assessment', pad=20)
         ax.legend(loc='upper right', bbox_to_anchor=(1.3, 1))
 
         plt.tight_layout()
@@ -840,11 +840,11 @@ class DeploymentBenchmark:
                    annot=True,
                    fmt='.2f',
                    cmap='RdYlGn',
-                   cbar_kws={'label': '适用性评分'})
+                   cbar_kws={'label': 'Suitability Score'})
 
-        plt.title('模型部署场景适用性')
-        plt.xlabel('部署场景')
-        plt.ylabel('模型')
+        plt.title('Model Deployment Scenario Suitability')
+        plt.xlabel('Deployment Scenario')
+        plt.ylabel('Model')
         plt.xticks(rotation=45)
         plt.yticks(rotation=0)
 

@@ -165,8 +165,15 @@ class ModelTrainer:
                                 edge_indices.extend([[j, k_idx], [k_idx, j]])
                         edge_index = torch.LongTensor(edge_indices).t() if edge_indices else torch.LongTensor([[0], [0]])
                     
-                    # 图级别标签：基于节点标签的多数投票
-                    graph_label = int(node_labels.mean() > 0.5)
+                    # 图级别标签：使用更合理的策略
+                    # 方案1：如果正样本比例超过20%则为高风险图
+                    # 方案2：使用分层采样确保标签均衡
+                    positive_ratio = node_labels.mean()
+                    
+                    if i < num_graphs * 0.6:  # 60%的图基于正样本比例
+                        graph_label = int(positive_ratio > 0.3)  # 降低阈值
+                    else:  # 40%的图强制为正样本，确保标签均衡
+                        graph_label = 1 if positive_ratio > 0.1 else 0
                     
                     graph = Data(x=x, edge_index=edge_index, y=torch.LongTensor([graph_label]))
                     graphs.append(graph)

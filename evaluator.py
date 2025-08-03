@@ -36,8 +36,8 @@ from trainer import ModelTrainer
 
 logger = logging.getLogger(__name__)
 
-# 设置中文字体
-plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans']
+# 设置字体，使用英文显示避免中文方框问题
+plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial']
 plt.rcParams['axes.unicode_minus'] = False
 
 
@@ -344,7 +344,7 @@ class ModelEvaluator:
                     stds.append(0)
 
             axes[i].bar(model_names, means, yerr=stds, capsize=5)
-            axes[i].set_title(f'{metric.upper()} 比较')
+            axes[i].set_title(f'{metric.upper()} Comparison')
             axes[i].set_ylabel(metric.upper())
             axes[i].tick_params(axis='x', rotation=45)
 
@@ -380,12 +380,12 @@ class ModelEvaluator:
                 plt.plot(fpr, tpr, color=color, linewidth=2,
                         label=f'{model_name} (AUC = {auc_mean:.3f})')
 
-        plt.plot([0, 1], [0, 1], 'k--', linewidth=1, label='随机分类器')
+        plt.plot([0, 1], [0, 1], 'k--', linewidth=1, label='Random Classifier')
         plt.xlim([0.0, 1.0])
         plt.ylim([0.0, 1.05])
-        plt.xlabel('假正率 (False Positive Rate)')
-        plt.ylabel('真正率 (True Positive Rate)')
-        plt.title('ROC曲线比较')
+        plt.xlabel('False Positive Rate')
+        plt.ylabel('True Positive Rate')
+        plt.title('ROC Curve Comparison')
         plt.legend()
         plt.grid(True, alpha=0.3)
 
@@ -415,9 +415,9 @@ class ModelEvaluator:
 
         plt.xlim([0.0, 1.0])
         plt.ylim([0.0, 1.05])
-        plt.xlabel('召回率 (Recall)')
-        plt.ylabel('精确率 (Precision)')
-        plt.title('Precision-Recall曲线比较')
+        plt.xlabel('Recall')
+        plt.ylabel('Precision')
+        plt.title('Precision-Recall Curve Comparison')
         plt.legend()
         plt.grid(True, alpha=0.3)
 
@@ -454,9 +454,9 @@ class ModelEvaluator:
                           [1-accuracy, accuracy]]) * 100
 
             sns.heatmap(cm, annot=True, fmt='.1f', cmap='Blues', ax=ax)
-            ax.set_title(f'{model_name} 混淆矩阵')
-            ax.set_xlabel('预测标签')
-            ax.set_ylabel('真实标签')
+            ax.set_title(f'{model_name} Confusion Matrix')
+            ax.set_xlabel('Predicted Label')
+            ax.set_ylabel('True Label')
 
         # 隐藏多余的子图
         for idx in range(n_models, rows * cols):
@@ -490,7 +490,7 @@ class ModelEvaluator:
 
             if data_for_plot:
                 axes[i].boxplot(data_for_plot, labels=labels)
-                axes[i].set_title(f'{metric.upper()} 分布')
+                axes[i].set_title(f'{metric.upper()} Distribution')
                 axes[i].set_ylabel(metric.upper())
                 axes[i].tick_params(axis='x', rotation=45)
                 axes[i].grid(True, alpha=0.3)
@@ -537,7 +537,7 @@ class ModelEvaluator:
             sns.heatmap(p_matrix, annot=True, fmt='.3f', cmap='RdYlBu_r',
                        xticklabels=all_models, yticklabels=all_models,
                        ax=axes[i], cbar_kws={'label': 'p-value'})
-            axes[i].set_title(f'{metric.upper()} 显著性检验')
+            axes[i].set_title(f'{metric.upper()} Significance Test')
 
         plt.tight_layout()
         plt.savefig(os.path.join(self.results_dir, 'significance_heatmap.png'),
@@ -548,24 +548,24 @@ class ModelEvaluator:
                                  comparison_results: Dict[str, Any]) -> str:
         """生成评估报告"""
         report = []
-        report.append("# 供应链风险预测模型评估报告\n")
-        report.append(f"评估时间: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        report.append(f"随机种子: {self.random_seeds}\n\n")
+        report.append("# Supply Chain Risk Prediction Model Evaluation Report\n")
+        report.append(f"Evaluation Time: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        report.append(f"Random Seeds: {self.random_seeds}\n\n")
 
         # 模型性能总结
-        report.append("## 模型性能总结\n")
+        report.append("## Model Performance Summary\n")
         comparison_df = comparison_results['comparison_table']
         report.append(comparison_df.to_string(index=False))
         report.append("\n\n")
 
         # 最佳模型
-        report.append("## 最佳模型\n")
+        report.append("## Best Models\n")
         for metric, (model_name, value) in comparison_results['best_models'].items():
             report.append(f"- **{metric.upper()}**: {model_name} ({value:.4f})\n")
         report.append("\n")
 
         # 详细结果
-        report.append("## 详细评估结果\n")
+        report.append("## Detailed Evaluation Results\n")
         for model_name, results in model_results.items():
             report.append(f"### {model_name.upper()}\n")
 
@@ -577,7 +577,7 @@ class ModelEvaluator:
 
         # 统计显著性
         if 'significance_test' in comparison_results:
-            report.append("## 统计显著性检验\n")
+            report.append("## Statistical Significance Test\n")
             sig_results = comparison_results['significance_test']
 
             for metric, metric_results in sig_results.items():
@@ -589,21 +589,21 @@ class ModelEvaluator:
                         significant_pairs.append(f"{comparison} (p={test_result['p_value']:.4f})")
 
                 if significant_pairs:
-                    report.append("显著差异的模型对:\n")
+                    report.append("Significant model pairs:\n")
                     for pair in significant_pairs:
                         report.append(f"- {pair}\n")
                 else:
-                    report.append("未发现显著差异。\n")
+                    report.append("No significant differences found.\n")
                 report.append("\n")
 
         # 结论和建议
-        report.append("## 结论和建议\n")
+        report.append("## Conclusions and Recommendations\n")
 
         # 找出综合最佳模型
         best_overall = self.find_best_overall_model(comparison_results['best_models'])
-        report.append(f"**综合推荐模型**: {best_overall}\n\n")
+        report.append(f"**Overall Recommended Model**: {best_overall}\n\n")
 
-        report.append("**RNN vs GNN 比较**:\n")
+        report.append("**RNN vs GNN Comparison**:\n")
         rnn_models = [m for m in model_results.keys() if m in ['rnn', 'lstm', 'gru']]
         gnn_models = [m for m in model_results.keys() if m in ['gcn', 'gat', 'graphsage']]
 
@@ -613,14 +613,14 @@ class ModelEvaluator:
             gnn_avg_acc = np.mean([model_results[m]['summary']['accuracy']['mean'] for m in gnn_models])
 
             if rnn_avg_acc > gnn_avg_acc:
-                report.append("- 序列模型(RNN/LSTM/GRU)在该任务上表现更好\n")
+                report.append("- Sequential models (RNN/LSTM/GRU) perform better on this task\n")
             else:
-                report.append("- 图模型(GCN/GAT/GraphSAGE)在该任务上表现更好\n")
+                report.append("- Graph models (GCN/GAT/GraphSAGE) perform better on this task\n")
 
-        report.append("\n**部署建议**:\n")
-        report.append("- 性能优先: 选择准确率最高的模型\n")
-        report.append("- 效率优先: 选择参数量较少但性能接近的模型\n")
-        report.append("- 鲁棒性优先: 选择在多个指标上都表现稳定的模型\n")
+        report.append("\n**Deployment Recommendations**:\n")
+        report.append("- Performance Priority: Choose the model with highest accuracy\n")
+        report.append("- Efficiency Priority: Choose models with fewer parameters but comparable performance\n")
+        report.append("- Robustness Priority: Choose models that perform consistently across multiple metrics\n")
 
         return "\n".join(report)
 

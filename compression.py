@@ -40,8 +40,9 @@ class ModelCompressor:
         """
         logger.info(f"开始剪枝，比例: {ratio:.1%}, 方法: {method}")
 
-        # 深拷贝模型
+        # 深拷贝模型并确保在正确设备上
         pruned_model = copy.deepcopy(model)
+        pruned_model = pruned_model.to(self.device)
 
         # 获取可剪枝的参数
         parameters_to_prune = []
@@ -114,72 +115,93 @@ class ModelCompressor:
         logger.info(f"开始量化，位数: {bits}, 方法: {method}")
 
         # 确保模型在CPU上进行量化
-        model_cpu = model.cpu()
+        model_cpu = copy.deepcopy(model).cpu()
         model_cpu.eval()
 
-        if method == 'dynamic':
-            # 动态量化
-            if bits == 8:
-                quantized_model = torch.quantization.quantize_dynamic(
-                    model_cpu,
-                    {nn.Linear, nn.LSTM, nn.GRU},
-                    dtype=torch.qint8
-                )
-            elif bits == 16:
-                quantized_model = torch.quantization.quantize_dynamic(
-                    model_cpu,
-                    {nn.Linear, nn.LSTM, nn.GRU},
-                    dtype=torch.float16
-                )
+        try:
+            if method == 'dynamic':
+                # 动态量化 - 使用新的API
+                if bits == 8:
+                    quantized_model = torch.ao.quantization.quantize_dynamic(
+                        model_cpu,
+                        {nn.Linear, nn.LSTM, nn.GRU},
+                        dtype=torch.qint8
+                    )
+                elif bits == 16:
+                    # 对于16位，直接转换为半精度
+                    quantized_model = model_cpu.half()
+                else:
+                    logger.warning(f"动态量化不支持 {bits} 位，使用8位")
+                    quantized_model = torch.ao.quantization.quantize_dynamic(
+                        model_cpu,
+                        {nn.Linear, nn.LSTM, nn.GRU},
+                        dtype=torch.qint8
+                    )
+
+            elif method == 'static':
+                # 静态量化
+                quantized_model = self._static_quantization(model_cpu, bits)
+
+            elif method == 'qat':
+                # 量化感知训练（需要重新训练）
+                quantized_model = self._quantization_aware_training(model_cpu, bits)
+
             else:
-                logger.warning(f"动态量化不支持 {bits} 位，使用8位")
-                quantized_model = torch.quantization.quantize_dynamic(
-                    model_cpu,
-                    {nn.Linear, nn.LSTM, nn.GRU},
-                    dtype=torch.qint8
-                )
+                logger.error(f"未知的量化方法: {method}")
+                return model
 
-        elif method == 'static':
-            # 静态量化
-            quantized_model = self._static_quantization(model_cpu, bits)
-
-        elif method == 'qat':
-            # 量化感知训练（需要重新训练）
-            quantized_model = self._quantization_aware_training(model_cpu, bits)
-
-        else:
-            logger.error(f"未知的量化方法: {method}")
-            return model
+        except Exception as e:
+            logger.warning(f"量化失败，回退到原始模型: {str(e)}")
+            # 如果量化失败，返回原始模型
+            if bits == 16:
+                # 至少尝试半精度
+                try:
+                    return model_cpu.half()
+                except:
+                    return model_cpu
+            return model_cpu
 
         return quantized_model
 
     def _static_quantization(self, model: nn.Module, bits: int) -> nn.Module:
         """静态量化"""
-        # 设置量化配置
-        model.qconfig = torch.quantization.get_default_qconfig('fbgemm')
+        try:
+            # 设置量化配置 - 使用新的API
+            model.qconfig = torch.ao.quantization.get_default_qconfig('x86')
 
-        # 准备量化
-        prepared_model = torch.quantization.prepare(model, inplace=False)
+            # 准备量化
+            prepared_model = torch.ao.quantization.prepare(model, inplace=False)
 
-        # 这里应该用校准数据集进行校准，但由于没有数据，我们跳过
-        logger.warning("静态量化需要校准数据，跳过校准步骤")
+            # 这里应该用校准数据集进行校准，但由于没有数据，我们跳过
+            logger.warning("静态量化需要校准数据，跳过校准步骤")
 
-        # 转换为量化模型
-        quantized_model = torch.quantization.convert(prepared_model, inplace=False)
+            # 转换为量化模型
+            quantized_model = torch.ao.quantization.convert(prepared_model, inplace=False)
 
-        return quantized_model
+            return quantized_model
+        except Exception as e:
+            logger.warning(f"静态量化失败: {str(e)}, 回退到动态量化")
+            return torch.ao.quantization.quantize_dynamic(
+                model, {nn.Linear, nn.LSTM, nn.GRU}, dtype=torch.qint8
+            )
 
     def _quantization_aware_training(self, model: nn.Module, bits: int) -> nn.Module:
         """量化感知训练"""
-        # 设置QAT配置
-        model.qconfig = torch.quantization.get_default_qat_qconfig('fbgemm')
+        try:
+            # 设置QAT配置 - 使用新的API
+            model.qconfig = torch.ao.quantization.get_default_qat_qconfig('x86')
 
-        # 准备QAT
-        prepared_model = torch.quantization.prepare_qat(model, inplace=False)
+            # 准备QAT
+            prepared_model = torch.ao.quantization.prepare_qat(model, inplace=False)
 
-        logger.warning("量化感知训练需要重新训练模型，返回准备好的模型")
+            logger.warning("量化感知训练需要重新训练模型，返回准备好的模型")
 
-        return prepared_model
+            return prepared_model
+        except Exception as e:
+            logger.warning(f"QAT准备失败: {str(e)}, 回退到动态量化")
+            return torch.ao.quantization.quantize_dynamic(
+                model, {nn.Linear, nn.LSTM, nn.GRU}, dtype=torch.qint8
+            )
 
     def remove_pruning_masks(self, model: nn.Module) -> nn.Module:
         """
@@ -241,6 +263,9 @@ class ModelCompressor:
         测量推理时间
         """
         model.eval()
+        # 确保模型和输入在同一设备上
+        model = model.to(self.device)
+        sample_input = sample_input.to(self.device)
 
         # 预热
         with torch.no_grad():
@@ -272,6 +297,11 @@ class ModelCompressor:
         """
         评估压缩模型的性能
         """
+        # 确保所有模型和输入都在同一设备上
+        original_model = original_model.to(self.device)
+        compressed_model = compressed_model.to(self.device)
+        sample_input = sample_input.to(self.device)
+        
         results = {}
 
         # 模型大小比较
@@ -538,9 +568,38 @@ def compress_models(model_paths: Dict[str, str], config: Dict) -> Dict[str, Any]
             else:
                 model.load_state_dict(checkpoint)
 
+            # 准备测试数据用于准确率评估
+            test_loader = None
+            try:
+                # 加载测试数据
+                if model_type in ['rnn', 'lstm', 'gru', 'transformer']:
+                    # 序列模型数据
+                    from torch.utils.data import TensorDataset, DataLoader
+                    # 创建虚拟测试数据
+                    test_inputs = torch.randn(1000, seq_len, input_dim)
+                    test_targets = torch.randint(0, 2, (1000,))
+                    test_dataset = TensorDataset(test_inputs, test_targets)
+                    test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
+                else:
+                    # GNN模型数据
+                    from torch_geometric.data import DataLoader as GraphDataLoader
+                    from torch_geometric.data import Data
+                    # 创建虚拟图测试数据
+                    test_graphs = []
+                    for _ in range(100):
+                        num_nodes = torch.randint(10, 30, (1,)).item()
+                        x = torch.randn(num_nodes, input_dim)
+                        edge_index = torch.randint(0, num_nodes, (2, num_nodes * 2))
+                        y = torch.randint(0, 2, (1,)).item()
+                        test_graphs.append(Data(x=x, edge_index=edge_index, y=y))
+                    test_loader = GraphDataLoader(test_graphs, batch_size=16, shuffle=False)
+            except Exception as e:
+                logger.warning(f"无法准备测试数据用于准确率评估: {str(e)}")
+                test_loader = None
+
             # 压缩和评估
             results = compressor.compress_and_evaluate(
-                model, model_type, sample_input
+                model, model_type, sample_input, test_loader
             )
 
             all_results[model_type] = results

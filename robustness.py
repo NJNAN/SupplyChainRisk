@@ -23,8 +23,8 @@ from torch.utils.data import DataLoader, TensorDataset
 
 logger = logging.getLogger(__name__)
 
-# 设置中文字体
-plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans']
+# 设置字体，使用英文显示避免中文方框问题
+plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial']
 plt.rcParams['axes.unicode_minus'] = False
 
 
@@ -63,31 +63,24 @@ class RobustnessEvaluator:
         for batch_idx in range(batch_size):
             sequence = perturbed_data[batch_idx]  # [seq_len, features]
 
-            # 节点丢弃
+            # 节点丢弃 - 改进策略：直接置零
             if drop_rate > 0:
-                drop_mask = torch.rand(seq_len) > drop_rate
-                if drop_mask.sum() > 0:  # 确保至少保留一个节点
-                    # 将丢弃的节点设为零或用相邻节点填充
-                    dropped_indices = torch.where(~drop_mask)[0]
-                    for idx in dropped_indices:
-                        if idx > 0:
-                            sequence[idx] = sequence[idx - 1]  # 用前一个节点填充
-                        elif idx < seq_len - 1:
-                            sequence[idx] = sequence[idx + 1]  # 用后一个节点填充
-                        else:
-                            sequence[idx] = 0  # 如果只有一个节点，设为零
+                # 生成drop mask
+                drop_mask = torch.rand(seq_len, device=data.device) < drop_rate
+                num_dropped = drop_mask.sum().item()
+                
+                if num_dropped > 0 and num_dropped < seq_len:  # 确保不会全部丢弃
+                    # 用零填充被丢弃的位置
+                    sequence[drop_mask] = 0
 
-            # 顺序打乱
+            # 顺序打乱 - 改进策略：真正的随机交换
             if shuffle_rate > 0:
-                num_shuffles = int(seq_len * shuffle_rate)
-                if num_shuffles > 0:
-                    # 随机选择要打乱的位置
-                    shuffle_indices = random.sample(range(seq_len), min(num_shuffles, seq_len))
-                    if len(shuffle_indices) > 1:
-                        # 打乱选中的位置
-                        shuffled_values = sequence[shuffle_indices].clone()
-                        random.shuffle(shuffle_indices)
-                        sequence[shuffle_indices] = shuffled_values
+                num_shuffles = max(1, int(seq_len * shuffle_rate))
+                
+                # 随机交换位置
+                for _ in range(num_shuffles):
+                    idx1, idx2 = random.sample(range(seq_len), 2)
+                    sequence[idx1], sequence[idx2] = sequence[idx2].clone(), sequence[idx1].clone()
 
             perturbed_data[batch_idx] = sequence
 
@@ -132,6 +125,17 @@ class RobustnessEvaluator:
 
             # 更新节点特征
             perturbed_graph.x = graph.x[keep_indices]
+            
+            # 更新batch信息（如果存在）
+            if hasattr(graph, 'batch') and graph.batch is not None:
+                perturbed_graph.batch = graph.batch[keep_indices]
+            
+            # 更新其他节点级别的属性
+            for attr_name in ['y', 'node_id', 'node_attr']:
+                if hasattr(graph, attr_name) and getattr(graph, attr_name) is not None:
+                    attr_value = getattr(graph, attr_name)
+                    if attr_value.size(0) == num_nodes:  # 确保是节点级别的属性
+                        setattr(perturbed_graph, attr_name, attr_value[keep_indices])
 
             # 更新边索引
             if hasattr(graph, 'edge_index') and graph.edge_index.size(1) > 0:
@@ -148,7 +152,7 @@ class RobustnessEvaluator:
                         valid_edges.append([new_src, new_dst])
 
                 if valid_edges:
-                    perturbed_graph.edge_index = torch.tensor(valid_edges, dtype=torch.long).t()
+                    perturbed_graph.edge_index = torch.tensor(valid_edges, dtype=torch.long, device=graph.edge_index.device).t()
 
                     # 更新边属性
                     if hasattr(graph, 'edge_attr') and graph.edge_attr is not None:
@@ -163,7 +167,7 @@ class RobustnessEvaluator:
                             perturbed_graph.edge_attr = None
                 else:
                     # 如果没有有效边，创建自环
-                    perturbed_graph.edge_index = torch.tensor([[0], [0]], dtype=torch.long)
+                    perturbed_graph.edge_index = torch.tensor([[0], [0]], dtype=torch.long, device=graph.edge_index.device)
                     if hasattr(graph, 'edge_attr') and graph.edge_attr is not None:
                         perturbed_graph.edge_attr = graph.edge_attr[:1]  # 保留一个边属性
 
@@ -196,6 +200,45 @@ class RobustnessEvaluator:
             dropout_mask = torch.rand_like(data) > noise_level
             noisy_data = data * dropout_mask.float()
 
+        return noisy_data
+
+    def add_noise(self, data: torch.Tensor, noise_level: float = 0.1, noise_type: str = 'gaussian') -> torch.Tensor:
+        """
+        对数据添加噪声
+
+        Args:
+            data: 输入数据 [batch_size, seq_len, features]
+            noise_level: 噪声水平 (标准差)
+            noise_type: 噪声类型 ('gaussian', 'uniform', 'salt_pepper')
+
+        Returns:
+            添加噪声后的数据
+        """
+        if noise_level == 0.0:
+            return data
+
+        noisy_data = data.clone()
+        
+        if noise_type == 'gaussian':
+            # 高斯噪声
+            noise = torch.normal(0, noise_level, size=data.shape, device=data.device)
+            noisy_data = data + noise
+            
+        elif noise_type == 'uniform':
+            # 均匀噪声  
+            noise = torch.rand(size=data.shape, device=data.device) * 2 * noise_level - noise_level
+            noisy_data = data + noise
+            
+        elif noise_type == 'salt_pepper':
+            # 椒盐噪声
+            mask = torch.rand(data.shape, device=data.device) < noise_level
+            salt_mask = torch.rand(data.shape, device=data.device) < 0.5
+            
+            # 盐噪声（高值）
+            noisy_data[mask & salt_mask] = data.max().item()
+            # 椒噪声（低值）
+            noisy_data[mask & ~salt_mask] = data.min().item()
+        
         return noisy_data
 
     def simulate_business_disruptions(self, data: torch.Tensor, disruption_type: str = 'holiday') -> torch.Tensor:
@@ -342,20 +385,37 @@ class RobustnessEvaluator:
         model.eval()
         with torch.no_grad():
             for batch in test_loader:
-                if isinstance(batch, (list, tuple)):
-                    # 序列数据
-                    inputs, targets = batch
-                    inputs, targets = inputs.to(self.device), targets.to(self.device)
-                    outputs = model(inputs)
-                else:
-                    # 图数据
-                    batch = batch.to(self.device)
-                    outputs = model(batch)
-                    targets = batch.y
+                try:
+                    if isinstance(batch, (list, tuple)):
+                        # 序列数据
+                        inputs, targets = batch
+                        inputs, targets = inputs.to(self.device), targets.to(self.device)
+                        outputs = model(inputs)
+                    else:
+                        # 图数据 - 确保所有组件都在同一设备上
+                        batch = batch.to(self.device)
+                        # 确保边索引和特征都在正确设备上
+                        if hasattr(batch, 'edge_index'):
+                            batch.edge_index = batch.edge_index.to(self.device)
+                        if hasattr(batch, 'x'):
+                            batch.x = batch.x.to(self.device)
+                        if hasattr(batch, 'edge_attr') and batch.edge_attr is not None:
+                            batch.edge_attr = batch.edge_attr.to(self.device)
+                        
+                        outputs = model(batch)
+                        targets = batch.y.to(self.device)
 
-                _, predicted = outputs.max(1)
-                all_targets.extend(targets.cpu().numpy())
-                all_predictions.extend(predicted.cpu().numpy())
+                    _, predicted = outputs.max(1)
+                    all_targets.extend(targets.cpu().numpy())
+                    all_predictions.extend(predicted.cpu().numpy())
+                
+                except Exception as e:
+                    logger.warning(f"批次处理失败，跳过: {str(e)}")
+                    continue
+
+        if not all_targets:
+            logger.warning("没有成功处理的批次，返回默认值")
+            return 0.0, 0.0
 
         accuracy = accuracy_score(all_targets, all_predictions)
         f1 = f1_score(all_targets, all_predictions, average='weighted', zero_division=0)
@@ -371,41 +431,66 @@ class RobustnessEvaluator:
         model.eval()
         with torch.no_grad():
             for batch in test_loader:
-                if isinstance(batch, (list, tuple)):
-                    # 序列数据
-                    inputs, targets = batch
-                    inputs = inputs.to(self.device)
-                    targets = targets.to(self.device)
+                try:
+                    if isinstance(batch, (list, tuple)):
+                        # 序列数据
+                        inputs, targets = batch
+                        inputs = inputs.to(self.device)
+                        targets = targets.to(self.device)
 
-                    # 应用扰动
-                    if perturbation_type == 'drop':
-                        perturbed_inputs = self.perturb_sequence(inputs, drop_rate=level)
-                    elif perturbation_type == 'shuffle':
-                        perturbed_inputs = self.perturb_sequence(inputs, shuffle_rate=level)
-                    elif perturbation_type == 'noise':
-                        perturbed_inputs = self.add_noise_to_sequence(inputs, noise_level=level)
+                        # 应用扰动
+                        if perturbation_type == 'drop':
+                            perturbed_inputs = self.perturb_sequence(inputs, drop_rate=level)
+                        elif perturbation_type == 'shuffle':
+                            perturbed_inputs = self.perturb_sequence(inputs, shuffle_rate=level)
+                        elif perturbation_type == 'noise':
+                            perturbed_inputs = self.add_noise(inputs, noise_level=level)
+                        else:
+                            perturbed_inputs = inputs
+
+                        outputs = model(perturbed_inputs)
+
                     else:
-                        perturbed_inputs = inputs
+                        # 图数据 - 确保所有组件都在正确设备上
+                        batch = batch.to(self.device)
+                        if hasattr(batch, 'edge_index'):
+                            batch.edge_index = batch.edge_index.to(self.device)
+                        if hasattr(batch, 'x'):
+                            batch.x = batch.x.to(self.device)
+                        if hasattr(batch, 'edge_attr') and batch.edge_attr is not None:
+                            batch.edge_attr = batch.edge_attr.to(self.device)
 
-                    outputs = model(perturbed_inputs)
+                        # 应用扰动
+                        if perturbation_type == 'drop':
+                            # 对图数据应用节点丢弃
+                            perturbed_batch = self.perturb_graph(batch, drop_rate=level)
+                            outputs = model(perturbed_batch)
+                        elif perturbation_type == 'noise':
+                            # 对图节点特征添加噪声
+                            perturbed_batch = batch.clone()
+                            perturbed_batch.x = self.add_noise(batch.x, noise_level=level)
+                            outputs = model(perturbed_batch)
+                        elif perturbation_type == 'shuffle':
+                            # 对图节点特征进行随机打乱
+                            perturbed_batch = batch.clone()
+                            perturbed_batch.x = self.perturb_sequence(batch.x.unsqueeze(0), shuffle_rate=level).squeeze(0)
+                            outputs = model(perturbed_batch)
+                        else:
+                            outputs = model(batch)
 
-                else:
-                    # 图数据
-                    batch = batch.to(self.device)
+                        targets = batch.y.to(self.device)
 
-                    # 应用扰动
-                    if perturbation_type == 'drop':
-                        # 对图数据应用节点丢弃
-                        perturbed_batch = self.perturb_graph(batch, drop_rate=level)
-                        outputs = model(perturbed_batch)
-                    else:
-                        outputs = model(batch)
+                    _, predicted = outputs.max(1)
+                    all_targets.extend(targets.cpu().numpy())
+                    all_predictions.extend(predicted.cpu().numpy())
 
-                    targets = batch.y
+                except Exception as e:
+                    logger.warning(f"扰动批次处理失败，跳过: {str(e)}")
+                    continue
 
-                _, predicted = outputs.max(1)
-                all_targets.extend(targets.cpu().numpy())
-                all_predictions.extend(predicted.cpu().numpy())
+        if not all_targets:
+            logger.warning("没有成功处理的扰动批次，返回默认值")
+            return 0.0, 0.0
 
         accuracy = accuracy_score(all_targets, all_predictions)
         f1 = f1_score(all_targets, all_predictions, average='weighted', zero_division=0)
@@ -490,8 +575,8 @@ class RobustnessEvaluator:
 
             # 设置图表
             if perturbation_type == 'business':
-                ax1.set_xlabel('业务中断类型')
-                ax2.set_xlabel('业务中断类型')
+                ax1.set_xlabel('Business Disruption Type')
+                ax2.set_xlabel('Business Disruption Type')
                 # 为业务中断设置分类标签
                 disruption_labels = ['holiday', 'port_closure', 'weather', 'pandemic']
                 ax1.set_xticks(range(len(disruption_labels)))
@@ -499,13 +584,13 @@ class RobustnessEvaluator:
                 ax2.set_xticks(range(len(disruption_labels)))
                 ax2.set_xticklabels(disruption_labels, rotation=45)
             else:
-                ax1.set_xlabel(f'扰动强度 ({perturbation_type})')
-                ax2.set_xlabel(f'扰动强度 ({perturbation_type})')
+                ax1.set_xlabel(f'Perturbation Strength ({perturbation_type})')
+                ax2.set_xlabel(f'Perturbation Strength ({perturbation_type})')
 
-            ax1.set_ylabel('准确率')
-            ax2.set_ylabel('F1分数')
-            ax1.set_title(f'准确率 vs {perturbation_type.upper()} 扰动强度')
-            ax2.set_title(f'F1分数 vs {perturbation_type.upper()} 扰动强度')
+            ax1.set_ylabel('Accuracy')
+            ax2.set_ylabel('F1 Score')
+            ax1.set_title(f'Accuracy vs {perturbation_type.upper()} Perturbation Strength')
+            ax2.set_title(f'F1 Score vs {perturbation_type.upper()} Perturbation Strength')
             ax1.legend()
             ax2.legend()
             ax1.grid(True, alpha=0.3)

@@ -41,16 +41,16 @@ models:
 
   transformer:
     input_dim: 93  # 匹配特征工程后的维度
-    d_model: 128
-    nhead: 8
-    num_layers: 6
-    dropout: 0.3
+    d_model: 64    # 降低模型维度
+    nhead: 4       # 降低注意力头数
+    num_layers: 3  # 降低层数
+    dropout: 0.2   # 降低dropout
 
 # 训练配置
 training:
   batch_size: 32
   epochs: 100
-  learning_rate: 0.001
+  learning_rate: 0.0001  # 降低学习率
   optimizer: "adam"
   loss_function: "cross_entropy"
   early_stopping: 10
